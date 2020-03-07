@@ -1,0 +1,53 @@
+#include "cuf_macros.CUF"
+
+module mod1
+use params  ! Define matrix m, n, k
+contains
+  attributes(global) subroutine test1(a,b,c)
+  use wmma
+  CUFReal2, device :: a(m,k)
+  CUFReal2, device :: b(k,n)
+  CUFReal2, device :: c(m,n)
+  WMMASubMatrix(WMMAMatrixA, 32,  8, 16, Real, WMMAColMajor) :: sa
+  WMMASubMatrix(WMMAMatrixB, 32,  8, 16, Real, WMMAColMajor) :: sb
+  WMMASubMatrix(WMMAMatrixC, 32,  8, 16, Real, WMMAKind2)    :: sc
+  WMMASubMatrix(WMMAMatrixC, 32,  8, 16, Real, WMMAKind2)    :: sd
+  CUFReal2 :: nx, ny
+  sc = CUFReal(0, kind=2)
+  call wmmaLoadMatrix(sa, a(1,1), m)
+  call wmmaLoadMatrix(sb, b(1,1), k)
+  call wmmaMatmul(sd, sa, sb, sc)
+  nx = CUFReal(10, kind=2)
+  do klp = 1, 2
+    if (wmmaAll(sd .lt. 32.0)) then
+      do i = 1, size(sd%x)
+        ! CUFReal2 arithmetic has to be done on scalars for now
+        ny = sd%x(i)
+        sd%x(i) = ny + nx
+      end do
+    end if
+  end do
+  call wmmaStoreMatrix(c(1,1), sd, m)
+  end subroutine
+end module
+
+subroutine volta(a,b,c)
+use params
+use real2_host_functions
+use cudafor
+use mod1
+real(4) :: a(m,k)
+real(4) :: b(k,n)
+real(4) :: c(m,n)
+
+CUFReal2, managed :: da(m,k)
+CUFReal2, managed :: db(k,n)
+CUFReal2, managed :: dc(m,n)
+
+da = __float2half(a)
+db = __float2half(b)
+call test1<<<1,32>>>(da,db,dc)
+istat = cudaDeviceSynchronize()
+c  = __half2float(dc)
+
+end subroutine
